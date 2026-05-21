@@ -713,12 +713,14 @@ async function send() {
 }
 
 async function postMessage(chatUuid, text) {
-  const fd = new FormData();
-  fd.append('human', text);
   const res = await fetch(p(`https://schulki.de/chats/${chatUuid}/messages`), {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
-    body: fd
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept':        'application/json',
+      'Content-Type':  'application/json',
+    },
+    body: JSON.stringify({ human: text }),
   });
   if (!res.ok) {
     const body = await res.text().catch(()=>'');
