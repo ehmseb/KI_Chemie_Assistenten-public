@@ -521,7 +521,7 @@
 </div>
 
 <script>
-const CF_WORKER = 'https://bot-proxy.ehmseb-c79.workers.dev/';
+const CF_WORKER = 'https://web-production-e4413.up.railway.app';
 const PROXY = CF_WORKER || 'http://localhost:8765';
 function p(url) { return `${PROXY}?url=${encodeURIComponent(url)}`; }
 
@@ -713,14 +713,14 @@ async function send() {
 }
 
 async function postMessage(chatUuid, text) {
+  const body = new URLSearchParams({ human: text });
   const res = await fetch(p(`https://schulki.de/chats/${chatUuid}/messages`), {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Accept':        'application/json',
-      'Content-Type':  'application/json',
     },
-    body: JSON.stringify({ human: text }),
+    body: body,
   });
   if (!res.ok) {
     const body = await res.text().catch(()=>'');
