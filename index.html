@@ -155,20 +155,6 @@
     -webkit-background-clip:text; -webkit-text-fill-color:transparent;
   }
   .h-sub { font-size:.73rem; color:var(--soft); margin-top:.05rem; }
-  /* ── Timer ── */
-  .timer-wrap {
-    display: flex; align-items: center; gap: .4rem;
-    background: rgba(42,143,168,.12);
-    border: 1.5px solid rgba(42,143,168,.25);
-    border-radius: 20px; padding: .35rem .9rem;
-    font-family: 'DM Sans', sans-serif; font-size: .88rem;
-    font-weight: 600; color: var(--accent);
-    backdrop-filter: blur(8px);
-  }
-  .timer-wrap.hidden { display: none; }
-  .timer-icon { font-size: .95rem; }
-  #timer-display { font-variant-numeric: tabular-nums; letter-spacing: .05em; min-width: 3.2ch; }
-
   .btn-cfg {
     background:var(--glass); border:1.5px solid var(--border);
     color:var(--soft); cursor:pointer; font-size:.8rem;
@@ -450,6 +436,19 @@
     #chat { padding:1rem .75rem; }
     #bar { padding:.75rem .75rem; }
   }
+
+  /* ── Timer ── */
+  .timer-wrap {
+    display: flex; align-items: center; gap: .45rem;
+    background: rgba(42,143,168,.12);
+    border: 1.5px solid rgba(42,143,168,.28);
+    border-radius: 20px; padding: .35rem .9rem;
+    font-family: 'DM Sans', sans-serif; font-size: .88rem;
+    font-weight: 600; color: var(--accent);
+    backdrop-filter: blur(8px);
+  }
+  .timer-wrap.hidden { display: none; }
+  #timer-display { font-variant-numeric: tabular-nums; letter-spacing: .05em; min-width: 3.2ch; }
 </style>
 </head>
 <body>
@@ -488,7 +487,7 @@
       </div>
     </div>
     <div id="timer-wrap" class="timer-wrap hidden">
-      <span class="timer-icon">⏱</span>
+      <span>⏱</span>
       <span id="timer-display">00:00</span>
     </div>
   </header>
@@ -534,33 +533,15 @@
 </div>
 
 <script>
-function p(url) { return `/proxy?url=${encodeURIComponent(url)}`; }
+const CF_WORKER = 'https://web-production-e4413.up.railway.app';
+const PROXY = CF_WORKER || 'http://localhost:8765';
+function p(url) { return `${PROXY}?url=${encodeURIComponent(url)}`; }
 
-let bots = [];
+let token    = '';
+let bots     = [];
 let activeBot = null;
 
-// ── Timer ──────────────────────────────────────────────────────
-let timerInterval = null;
-let timerSeconds  = 0;
-
-function startTimer() {
-  stopTimer();
-  timerSeconds = 0;
-  updateTimerDisplay();
-  document.getElementById('timer-wrap').classList.remove('hidden');
-  timerInterval = setInterval(() => {
-    timerSeconds++;
-    updateTimerDisplay();
-  }, 1000);
-}
-function stopTimer() {
-  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-}
-function updateTimerDisplay() {
-  const m = String(Math.floor(timerSeconds / 60)).padStart(2, '0');
-  const s = String(timerSeconds % 60).padStart(2, '0');
-  document.getElementById('timer-display').textContent = `${m}:${s}`;
-}
+const DEFAULT_TOKEN = '19|GnJnxcR8maEM1dcZpjGAdSYhhhpNFdeyGYl6Zke1fc8782fb';
 
 const DEFAULT_BOTS = [
   { name: 'Nils',            subtitle: 'Assistent der 28M-Klassen', uuid: '156594ad-6139-4345-a63f-892205392d5e', logo: 'https://schulki.de/storage/chats/avatars/01KP3HJZP7AAKZ78Y6S56KRTHX.webp' },
@@ -570,7 +551,15 @@ const DEFAULT_BOTS = [
 
 function loadConfig() {
   bots = DEFAULT_BOTS;
-  return true;
+  try {
+    const raw = localStorage.getItem('schulki2_cfg');
+    if (raw) {
+      const c = JSON.parse(raw);
+      token = c.token || DEFAULT_TOKEN;
+    } else { token = DEFAULT_TOKEN; }
+    document.getElementById('cfg-token').value = token;
+    return !!(token);
+  } catch { token = DEFAULT_TOKEN; return !!(token); }
 }
 
 function saveConfig() {
@@ -630,7 +619,7 @@ function buildSidebar() {
       ${avatarHtml}
       <div class="bot-info">
         <div class="bot-name">${esc(bot.name)}</div>
-        <div class="bot-status">${esc(bot.subtitle || "Assistent")}</div>
+        <div class="bot-status">${esc(bot.subtitle || 'Assistent')}</div>
       </div>`;
     btn.onclick = () => selectBot(bot, btn);
     list.appendChild(btn);
@@ -737,13 +726,14 @@ async function send() {
 }
 
 async function postMessage(chatUuid, text) {
+  const body = new URLSearchParams({ human: text });
   const res = await fetch(p(`https://schulki.de/chats/${chatUuid}/messages`), {
     method: 'POST',
     headers: {
-      'Accept': 'application/json',
-      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${token}`,
+      'Accept':        'application/json',
     },
-    body: JSON.stringify({ human: text }),
+    body: body,
   });
   if (!res.ok) {
     const body = await res.text().catch(()=>'');
@@ -761,7 +751,7 @@ async function streamResponse(msgUuid) {
   let accumulated = '';
   const res = await fetch(url, {
     method: 'GET',
-    headers: { 'Accept': 'text/event-stream' }
+    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'text/event-stream' }
   });
   if (!res.ok) throw new Error(`SSE ${res.status}`);
   const reader = res.body.getReader();
@@ -834,6 +824,25 @@ function markdownLite(t){
     .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
     .replace(/\*(.+?)\*/g,'<em>$1</em>')
     .replace(/\n/g,'<br>');
+}
+
+// ── Timer ──
+let timerInterval = null;
+let timerSeconds  = 0;
+function startTimer() {
+  stopTimer();
+  timerSeconds = 0;
+  updateTimerDisplay();
+  document.getElementById('timer-wrap').classList.remove('hidden');
+  timerInterval = setInterval(() => { timerSeconds++; updateTimerDisplay(); }, 1000);
+}
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+function updateTimerDisplay() {
+  const m = String(Math.floor(timerSeconds / 60)).padStart(2, '0');
+  const s = String(timerSeconds % 60).padStart(2, '0');
+  document.getElementById('timer-display').textContent = m + ':' + s;
 }
 </script>
 </body>
