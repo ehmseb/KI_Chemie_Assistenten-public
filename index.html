@@ -155,6 +155,20 @@
     -webkit-background-clip:text; -webkit-text-fill-color:transparent;
   }
   .h-sub { font-size:.73rem; color:var(--soft); margin-top:.05rem; }
+  /* ── Timer ── */
+  .timer-wrap {
+    display: flex; align-items: center; gap: .4rem;
+    background: rgba(42,143,168,.12);
+    border: 1.5px solid rgba(42,143,168,.25);
+    border-radius: 20px; padding: .35rem .9rem;
+    font-family: 'DM Sans', sans-serif; font-size: .88rem;
+    font-weight: 600; color: var(--accent);
+    backdrop-filter: blur(8px);
+  }
+  .timer-wrap.hidden { display: none; }
+  .timer-icon { font-size: .95rem; }
+  #timer-display { font-variant-numeric: tabular-nums; letter-spacing: .05em; min-width: 3.2ch; }
+
   .btn-cfg {
     background:var(--glass); border:1.5px solid var(--border);
     color:var(--soft); cursor:pointer; font-size:.8rem;
@@ -445,14 +459,9 @@
   <div class="card">
     <h2>⚙ Einstellungen</h2>
     <p class="subtitle">
-      Trage deinen schulKI API-Token ein und füge für jeden Bot die Chat-UUID hinzu
+      Füge für jeden Bot die Chat-UUID hinzu
       (die lange Zeichenfolge aus der schulki.de URL: <code style="font-size:.8em">/chats/<b>DIESE-UUID</b>/...</code>).
-      Alles wird nur lokal in deinem Browser gespeichert.
     </p>
-    <div class="field">
-      <label>API-Token</label>
-      <input type="password" id="cfg-token" placeholder="Dein schulKI API-Token" />
-    </div>
     <div class="field">
       <label>Seitenname (optional)</label>
       <input type="text" id="cfg-title" placeholder="z.B. KI-Chat · Klasse 8a" />
@@ -477,6 +486,10 @@
         <div class="h-title" id="page-title">KI Assistenten von Herrn Ehm an der KSK</div>
         <div class="h-sub" id="bot-label">Wähle einen Bot</div>
       </div>
+    </div>
+    <div id="timer-wrap" class="timer-wrap hidden">
+      <span class="timer-icon">⏱</span>
+      <span id="timer-display">00:00</span>
     </div>
   </header>
 
@@ -505,7 +518,7 @@
       </div>
 
       <div class="err-bar" id="err-bar">
-        ⚠ Fehler beim API-Aufruf – bitte Token und Bot-UUID in den Einstellungen prüfen.
+        ⚠ Fehler beim API-Aufruf – bitte Bot-UUID in den Einstellungen prüfen.
       </div>
 
       <div id="chat"></div>
@@ -521,32 +534,43 @@
 </div>
 
 <script>
-const CF_WORKER = 'https://web-production-e4413.up.railway.app';
-const PROXY = CF_WORKER || 'http://localhost:8765';
-function p(url) { return `${PROXY}?url=${encodeURIComponent(url)}`; }
+function p(url) { return `/proxy?url=${encodeURIComponent(url)}`; }
 
-let token = '';
 let bots = [];
 let activeBot = null;
 
-const DEFAULT_TOKEN = '19|GnJnxcR8maEM1dcZpjGAdSYhhhpNFdeyGYl6Zke1fc8782fb';
+// ── Timer ──────────────────────────────────────────────────────
+let timerInterval = null;
+let timerSeconds  = 0;
+
+function startTimer() {
+  stopTimer();
+  timerSeconds = 0;
+  updateTimerDisplay();
+  document.getElementById('timer-wrap').classList.remove('hidden');
+  timerInterval = setInterval(() => {
+    timerSeconds++;
+    updateTimerDisplay();
+  }, 1000);
+}
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+function updateTimerDisplay() {
+  const m = String(Math.floor(timerSeconds / 60)).padStart(2, '0');
+  const s = String(timerSeconds % 60).padStart(2, '0');
+  document.getElementById('timer-display').textContent = `${m}:${s}`;
+}
+
 const DEFAULT_BOTS = [
-  { name: 'Nils',            uuid: '156594ad-6139-4345-a63f-892205392d5e', logo: 'https://schulki.de/storage/chats/avatars/01KP3HJZP7AAKZ78Y6S56KRTHX.webp' },
-  { name: 'Silas',           uuid: '34bfa6b5-0fe6-4f53-9b2c-ab3c65f8ed00', logo: 'https://schulki.de/storage/chats/avatars/01K0V8QRYTGPA7HN5181EM8WEG.webp' },
-  { name: 'Jennifer Doudna', uuid: 'a5794ee2-8f0a-4699-ad89-0d11f789050d', logo: 'https://schulki.de/storage/chats/avatars/01KQC3Z9BEQFPK6RFTM9BZKPNM.webp' },
+  { name: 'Nils',            subtitle: 'Assistent der 28M-Klassen', uuid: '156594ad-6139-4345-a63f-892205392d5e', logo: 'https://schulki.de/storage/chats/avatars/01KP3HJZP7AAKZ78Y6S56KRTHX.webp' },
+  { name: 'Silas',           subtitle: 'Assistent der 29M-Klassen', uuid: '34bfa6b5-0fe6-4f53-9b2c-ab3c65f8ed00', logo: 'https://schulki.de/storage/chats/avatars/01K0V8QRYTGPA7HN5181EM8WEG.webp' },
+  { name: 'Jennifer Doudna', subtitle: 'Assistent des EF',          uuid: 'a5794ee2-8f0a-4699-ad89-0d11f789050d', logo: 'https://schulki.de/storage/chats/avatars/01KQC3Z9BEQFPK6RFTM9BZKPNM.webp' },
 ];
 
 function loadConfig() {
   bots = DEFAULT_BOTS;
-  try {
-    const raw = localStorage.getItem('schulki2_cfg');
-    if (raw) {
-      const c = JSON.parse(raw);
-      token = c.token || DEFAULT_TOKEN;
-    } else { token = DEFAULT_TOKEN; }
-    document.getElementById('cfg-token').value = token;
-    return !!(token);
-  } catch { token = DEFAULT_TOKEN; return !!(token); }
+  return true;
 }
 
 function saveConfig() {
@@ -557,10 +581,9 @@ function saveConfig() {
     const [n, u, l] = r.querySelectorAll('input');
     if (n.value.trim()) bots.push({ name: n.value.trim(), uuid: u.value.trim(), logo: l?.value.trim() || '' });
   });
-  if (!token)       { alert('Bitte API-Token eingeben.'); return; }
   if (!bots.length) { alert('Mindestens einen Bot hinzufügen.'); return; }
   if (bots.some(b => !b.uuid)) { alert('Bitte bei jedem Bot eine Chat-UUID eingeben.'); return; }
-  localStorage.setItem('schulki2_cfg', JSON.stringify({ token, title, bots }));
+  localStorage.setItem('schulki2_cfg', JSON.stringify({ title, bots }));
   document.getElementById('page-title').textContent = title;
   document.title = title;
   buildSidebar();
@@ -607,7 +630,7 @@ function buildSidebar() {
       ${avatarHtml}
       <div class="bot-info">
         <div class="bot-name">${esc(bot.name)}</div>
-        <div class="bot-status">Assistent</div>
+        <div class="bot-status">${esc(bot.subtitle || "Assistent")}</div>
       </div>`;
     btn.onclick = () => selectBot(bot, btn);
     list.appendChild(btn);
@@ -623,6 +646,7 @@ async function selectBot(bot, itemEl) {
   itemEl.classList.add('active');
   document.getElementById('bot-label').textContent = bot.name;
   document.getElementById('err-bar').classList.remove('on');
+  startTimer();
 
   // Clear chat and show typing indicator immediately
   const c = document.getElementById('chat');
@@ -713,14 +737,13 @@ async function send() {
 }
 
 async function postMessage(chatUuid, text) {
-  const body = new URLSearchParams({ human: text });
   const res = await fetch(p(`https://schulki.de/chats/${chatUuid}/messages`), {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept':        'application/json',
+      'Accept': 'application/json',
+      'Content-Type':  'application/json',
     },
-    body: body,
+    body: JSON.stringify({ human: text }),
   });
   if (!res.ok) {
     const body = await res.text().catch(()=>'');
@@ -738,7 +761,7 @@ async function streamResponse(msgUuid) {
   let accumulated = '';
   const res = await fetch(url, {
     method: 'GET',
-    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'text/event-stream' }
+    headers: { 'Accept': 'text/event-stream' }
   });
   if (!res.ok) throw new Error(`SSE ${res.status}`);
   const reader = res.body.getReader();
