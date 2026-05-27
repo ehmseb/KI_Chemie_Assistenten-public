@@ -436,19 +436,6 @@
     #chat { padding:1rem .75rem; }
     #bar { padding:.75rem .75rem; }
   }
-  /* ── Neuer-Chat-Button ── */
-  .btn-new-chat {
-    margin: .75rem; padding: .55rem .75rem;
-    background: linear-gradient(135deg, var(--accent), var(--acc2));
-    color: #fff; border: none; border-radius: 10px; cursor: pointer;
-    font-family: 'DM Sans', sans-serif; font-size: .8rem; font-weight: 500;
-    display: flex; align-items: center; gap: .4rem; justify-content: center;
-    box-shadow: 0 3px 12px rgba(42,143,168,.3);
-    transition: opacity .2s, transform .15s;
-  }
-  .btn-new-chat:hover { opacity:.88; transform:translateY(-1px); }
-  .btn-new-chat:disabled { opacity:.4; cursor:default; transform:none; }
-
   /* ── Timer ── */
   .timer-wrap {
     display: flex; align-items: center; gap: .45rem;
@@ -511,7 +498,6 @@
     <!-- LEFT SIDEBAR -->
     <div id="sidebar">
       <div class="sidebar-header">Assistenten</div>
-      <button id="btn-new-chat" class="btn-new-chat" onclick="resetChat()" disabled>🔄 Neuer Chat</button>
       <div id="bot-list"></div>
     </div>
 
@@ -549,9 +535,11 @@
 </div>
 
 <script>
-const CF_WORKER = 'https://web-production-e4413.up.railway.app';
-const PROXY = CF_WORKER || 'http://localhost:8765';
-function p(url) { return `${PROXY}?url=${encodeURIComponent(url)}`; }
+const CF_WORKER   = 'https://web-production-e4413.up.railway.app';
+const PROXY       = CF_WORKER || 'http://localhost:8765';
+// Eindeutige Session-ID pro Seitenaufruf → isolierter Cookie-Jar im Proxy
+const SESSION_ID  = Math.random().toString(36).slice(2, 14);
+function p(url) { return `${PROXY}?url=${encodeURIComponent(url)}&_sid=${SESSION_ID}`; }
 
 let token = '';
 let bots = [];
@@ -561,7 +549,7 @@ const DEFAULT_TOKEN = '19|GnJnxcR8maEM1dcZpjGAdSYhhhpNFdeyGYl6Zke1fc8782fb';
 const DEFAULT_BOTS = [
   { name: 'Nils',            subtitle: 'Assistent der 28M-Klassen', uuid: '156594ad-6139-4345-a63f-892205392d5e', logo: 'https://schulki.de/storage/chats/avatars/01KP3HJZP7AAKZ78Y6S56KRTHX.webp' },
   { name: 'Silas',           subtitle: 'Assistent der 29M-Klassen', uuid: '34bfa6b5-0fe6-4f53-9b2c-ab3c65f8ed00', logo: 'https://schulki.de/storage/chats/avatars/01K0V8QRYTGPA7HN5181EM8WEG.webp' },
-  { name: 'Jennifer Doudna', subtitle: 'Assistentin des EF',          uuid: 'a5794ee2-8f0a-4699-ad89-0d11f789050d', logo: 'https://schulki.de/storage/chats/avatars/01KQC3Z9BEQFPK6RFTM9BZKPNM.webp' },
+  { name: 'Jennifer Doudna', subtitle: 'Assistent des EF',          uuid: 'a5794ee2-8f0a-4699-ad89-0d11f789050d', logo: 'https://schulki.de/storage/chats/avatars/01KQC3Z9BEQFPK6RFTM9BZKPNM.webp' },
 ];
 
 function loadConfig() {
@@ -651,26 +639,24 @@ async function selectBot(bot, itemEl) {
   itemEl.classList.add('active');
   document.getElementById('bot-label').textContent = bot.name;
   document.getElementById('err-bar').classList.remove('on');
-  document.getElementById('btn-new-chat').disabled = false;
   startTimer();
 
-  // Neuen Chat erstellen → jeder Schüler bekommt eine eigene Konversation
-  activeSessionUuid = await createNewChat(bot.uuid);
-
-  // Chat leeren und Begrüssung laden
+  // Clear chat and show typing indicator immediately
   const c = document.getElementById('chat');
   c.innerHTML = '';
   addTyping();
   setInputEnabled(false);
 
   try {
-    const msgUuid = await postMessage(activeSessionUuid, 'start');
+    const msgUuid = await postMessage(bot.uuid, 'start');
     removeTyping();
     await streamResponse(msgUuid);
   } catch(e) {
     removeTyping();
     showWelcome(bot);
-    console.warn('Begrüssung fehlgeschlagen:', e);
+    console.warn('Startnachricht fehlgeschlagen:', e);
+    document.getElementById('err-bar').classList.add('on');
+    document.getElementById('err-bar').textContent = '⚠ Begrüßung fehlgeschlagen: ' + e.message;
   }
 
   setInputEnabled(true);
@@ -730,7 +716,7 @@ async function send() {
   addMsg('user', text);
   addTyping();
   try {
-    const msgUuid = await postMessage(activeSessionUuid || activeBot.uuid, text);
+    const msgUuid = await postMessage(activeBot.uuid, text);
     removeTyping();
     await streamResponse(msgUuid);
   } catch(e) {
@@ -844,57 +830,7 @@ function markdownLite(t){
     .replace(/\n/g,'<br>');
 }
 
-// ── Separate Chats pro Schüler ──────────────────────────────
-// Jeder Seitenaufruf erhält eine eindeutige Session-ID.
-// Beim Bot-Auswählen wird versucht, über die schulki.de-API
-// einen NEUEN Chat zu erstellen, damit jeder Schüler seine eigene
-// Konversation bekommt und keine gemeinsame History entsteht.
-const PAGE_SESSION = Math.random().toString(36).slice(2, 10);
-let activeSessionUuid = null;
-
-async function createNewChat(templateUuid) {
-  // Bereits in dieser Session erstellt?
-  const key = `schulki_sess_${PAGE_SESSION}_${templateUuid}`;
-  const cached = sessionStorage.getItem(key);
-  if (cached) { console.log('Session-Chat wiederverwendet:', cached); return cached; }
-
-  // Versuch 1: POST /chats mit template_id
-  try {
-    const fd = new FormData();
-    fd.append('template_id', templateUuid);
-    const res = await fetch(p('https://schulki.de/chats'), {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
-      body: fd,
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const uuid = data?.data?.uuid || data?.uuid;
-      if (uuid) {
-        sessionStorage.setItem(key, uuid);
-        console.log('Neuer Session-Chat erstellt:', uuid);
-        return uuid;
-      }
-    }
-  } catch(e) { console.log('createNewChat Versuch 1 fehlgeschlagen:', e); }
-
-  // Fallback: Template-UUID verwenden
-  console.log('Fallback: verwende Template-UUID', templateUuid);
-  return templateUuid;
-}
-
-function resetChat() {
-  if (!activeBot) return;
-  // Session-UUID löschen → beim nächsten Aufruf wird ein neuer Chat erstellt
-  const key = `schulki_sess_${PAGE_SESSION}_${activeBot.uuid}`;
-  sessionStorage.removeItem(key);
-  activeSessionUuid = null;
-  // Bot neu auswählen
-  const activeItem = document.querySelector('.bot-item.active');
-  if (activeItem) selectBot(activeBot, activeItem);
-}
-
-// ── Timer ──────────────────────────────────────────────────
+// ── Timer ───────────────────────────────────────────────────────────────────
 let timerInterval = null;
 let timerSeconds  = 0;
 function startTimer() {
@@ -912,6 +848,8 @@ function updateTimerDisplay() {
   const s = String(timerSeconds % 60).padStart(2, '0');
   document.getElementById('timer-display').textContent = m + ':' + s;
 }
+// Hinweis in der Konsole für Debugging
+console.log('Session-ID für diesen Tab:', SESSION_ID);
 </script>
 </body>
 </html>
