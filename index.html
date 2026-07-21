@@ -649,8 +649,17 @@ async function selectBot(bot, itemEl) {
   flowiseSessionId = null; // neue Konversation bei jedem Bot-Wechsel
 
   if (bot.type === 'flowise') {
-    // Flowise hat keine "human=start"-Begrüßung wie schulki.de – einfach Welcome-Karte zeigen
-    showWelcome(bot);
+    addTyping();
+    setInputEnabled(false);
+    try {
+      await streamFlowise(bot, 'start');
+    } catch(e) {
+      removeTyping();
+      showWelcome(bot);
+      console.warn('Startnachricht fehlgeschlagen:', e);
+      document.getElementById('err-bar').classList.add('on');
+      document.getElementById('err-bar').textContent = '⚠ Begrüßung fehlgeschlagen: ' + e.message;
+    }
   } else {
     addTyping();
     setInputEnabled(false);
