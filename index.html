@@ -535,11 +535,9 @@
 </div>
 
 <script>
-const CF_WORKER   = 'https://web-production-e4413.up.railway.app';
-const PROXY       = CF_WORKER || 'http://localhost:8765';
-// Eindeutige Session-ID pro Seitenaufruf → isolierter Cookie-Jar im Proxy
-const SESSION_ID  = Math.random().toString(36).slice(2, 14);
-function p(url) { return `${PROXY}?url=${encodeURIComponent(url)}&_sid=${SESSION_ID}`; }
+// Kein Proxy mehr nötig: die /api/-Endpunkte von schulki.de brauchen
+// keinen CSRF-Token und haben CORS bereits korrekt gesetzt.
+const API_BASE = 'https://schulki.de/api';
 
 let token = '';
 let bots = [];
@@ -731,7 +729,7 @@ async function send() {
 
 async function postMessage(chatUuid, text) {
   const body = new URLSearchParams({ human: text });
-  const res = await fetch(p(`https://schulki.de/chats/${chatUuid}/messages`), {
+  const res = await fetch(`${API_BASE}/chats/${chatUuid}/messages`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -750,7 +748,7 @@ async function postMessage(chatUuid, text) {
 async function streamResponse(msgUuid) {
   const length = document.getElementById('opt-length').value;
   const diff   = document.getElementById('opt-diff').value;
-  const url = p(`https://schulki.de/messages/${msgUuid}/stream?length=${length}&difficulty=${diff}`);
+  const url = `${API_BASE}/messages/${msgUuid}/stream?length=${length}&difficulty=${diff}`;
   const bubble = addBotBubble();
   let accumulated = '';
   const res = await fetch(url, {
@@ -848,8 +846,6 @@ function updateTimerDisplay() {
   const s = String(timerSeconds % 60).padStart(2, '0');
   document.getElementById('timer-display').textContent = m + ':' + s;
 }
-// Hinweis in der Konsole für Debugging
-console.log('Session-ID für diesen Tab:', SESSION_ID);
 </script>
 </body>
 </html>
