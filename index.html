@@ -664,9 +664,9 @@ async function selectBot(bot, itemEl) {
     addTyping();
     setInputEnabled(false);
     try {
-      const msgUuid = await postMessage(bot.uuid, 'start');
+      const streamUrl = await postMessage(bot.uuid, 'start');
       removeTyping();
-      await streamResponse(msgUuid);
+      await streamResponse(streamUrl);
     } catch(e) {
       removeTyping();
       showWelcome(bot);
@@ -736,9 +736,9 @@ async function send() {
     if (activeBot.type === 'flowise') {
       await streamFlowise(activeBot, text);
     } else {
-      const msgUuid = await postMessage(activeBot.uuid, text);
+      const streamUrl = await postMessage(activeBot.uuid, text);
       removeTyping();
-      await streamResponse(msgUuid);
+      await streamResponse(streamUrl);
     }
   } catch(e) {
     removeTyping();
@@ -751,64 +751,66 @@ async function send() {
 }
 
 async function postMessage(chatUuid, text) {
-  const body = new URLSearchParams({ human: text });
+  const length = document.getElementById('opt-length').value;
+  const diff   = document.getElementById('opt-diff').value;
+
   const res = await fetch(`${API_BASE}/chats/${chatUuid}/messages`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Accept':        'application/json',
+      'Content-Type':  'application/json',
     },
-    body: body,
+    body: JSON.stringify({ human: text, length, difficulty: diff, stream_url: true }),
   });
   if (!res.ok) {
     const body = await res.text().catch(()=>'');
     throw new Error(`POST ${res.status}: ${body.slice(0,120)}`);
   }
   const data = await res.json();
-  return data.data.uuid;
+  if (!data.stream) throw new Error('Keine stream_url in der Antwort erhalten');
+  return data.stream; // signierte, ca. 10 Min. gültige SSE-URL
 }
 
-async function streamResponse(msgUuid) {
-  const length = document.getElementById('opt-length').value;
-  const diff   = document.getElementById('opt-diff').value;
-  const url = `${API_BASE}/messages/${msgUuid}/stream?length=${length}&difficulty=${diff}`;
-  const bubble = addBotBubble();
-  let accumulated = '';
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'text/event-stream' }
+// Signierte stream_url braucht keinen Authorization-Header mehr (EventSource
+// kann sowieso keine Custom-Header setzen) – die Signatur autorisiert den Abruf.
+function streamResponse(streamUrl) {
+  return new Promise((resolve, reject) => {
+    const bubble = addBotBubble();
+    let accumulated = '';
+    const source = new EventSource(streamUrl);
+
+    source.onmessage = (e) => {
+      let obj;
+      try { obj = JSON.parse(e.data); } catch { return; }
+
+      if (typeof obj.delta === 'string') {
+        accumulated += obj.delta;
+        bubble.innerHTML = markdownLite(accumulated) + '<span class="cursor"></span>';
+        scrollBot();
+      }
+      // Verschiedene mögliche Ende-Signale abdecken, bis wir das exakte Format bestätigt haben
+      if (obj.done === true || obj.finished === true || obj.event === 'end' || obj.event === 'done') {
+        source.close();
+        bubble.innerHTML = markdownLite(accumulated) || '(Keine Antwort erhalten)';
+        scrollBot();
+        resolve();
+      }
+    };
+
+    source.onerror = () => {
+      source.close();
+      if (accumulated) {
+        // Verbindung wurde vermutlich nach Abschluss regulär geschlossen
+        bubble.innerHTML = markdownLite(accumulated) || '(Keine Antwort erhalten)';
+        scrollBot();
+        resolve();
+      } else {
+        bubble.innerHTML = '(Fehler beim Empfangen der Antwort)';
+        reject(new Error('SSE-Verbindung fehlgeschlagen oder abgebrochen'));
+      }
+    };
   });
-  if (!res.ok) throw new Error(`SSE ${res.status}`);
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  function extractObjects(str) {
-    const objects=[]; let depth=0, start=-1;
-    for(let i=0;i<str.length;i++){
-      if(str[i]==='{'){if(depth===0)start=i;depth++;}
-      else if(str[i]==='}'){depth--;if(depth===0&&start!==-1){objects.push(str.slice(start,i+1));start=-1;}}
-    }
-    return{objects,rest:depth>0&&start!==-1?str.slice(start):''};
-  }
-  while(true){
-    const{done,value}=await reader.read();
-    if(done) break;
-    buf+=decoder.decode(value,{stream:true});
-    const{objects,rest}=extractObjects(buf);
-    buf=rest;
-    for(const raw of objects){
-      try{
-        const obj=JSON.parse(raw);
-        if(obj.delta){
-          accumulated+=obj.delta;
-          bubble.innerHTML=markdownLite(accumulated)+'<span class="cursor"></span>';
-          scrollBot();
-        }
-      }catch(e){}
-    }
-  }
-  bubble.innerHTML=markdownLite(accumulated)||'(Keine Antwort erhalten)';
-  scrollBot();
 }
 
 // ── Fredi (Flowise) ────────────────────────────────────────────
