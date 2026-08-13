@@ -638,6 +638,7 @@ function buildSidebar() {
 }
 
 async function selectBot(bot, itemEl) {
+  if (activeBot === bot) return; // schon aktiv – keine erneute Startnachricht senden
   activeBot = bot;
   document.querySelectorAll('.bot-item').forEach(b => b.classList.remove('active'));
   itemEl.classList.add('active');
@@ -660,7 +661,7 @@ async function selectBot(bot, itemEl) {
       showWelcome(bot);
       console.warn('Startnachricht fehlgeschlagen:', e);
       document.getElementById('err-bar').classList.add('on');
-      document.getElementById('err-bar').textContent = '⚠ Begrüßung fehlgeschlagen: ' + e.message;
+      document.getElementById('err-bar').textContent = friendlyErrorText(e);
     }
   } else {
     addTyping();
@@ -674,7 +675,7 @@ async function selectBot(bot, itemEl) {
       showWelcome(bot);
       console.warn('Startnachricht fehlgeschlagen:', e);
       document.getElementById('err-bar').classList.add('on');
-      document.getElementById('err-bar').textContent = '⚠ Begrüßung fehlgeschlagen: ' + e.message;
+      document.getElementById('err-bar').textContent = friendlyErrorText(e);
     }
   }
 
@@ -745,6 +746,7 @@ async function send() {
   } catch(e) {
     removeTyping();
     document.getElementById('err-bar').classList.add('on');
+    document.getElementById('err-bar').textContent = friendlyErrorText(e);
     console.error(e);
   } finally {
     setInputEnabled(true);
@@ -767,7 +769,9 @@ async function postMessage(chatUuid, text) {
   });
   if (!res.ok) {
     const body = await res.text().catch(()=>'');
-    throw new Error(`POST ${res.status}: ${body.slice(0,120)}`);
+    const err = new Error(`POST ${res.status}: ${body.slice(0,120)}`);
+    err.status = res.status;
+    throw err;
   }
   const data = await res.json();
   if (!data.stream) throw new Error('Keine stream_url in der Antwort erhalten');
@@ -836,7 +840,9 @@ async function streamFlowise(bot, text) {
   });
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    throw new Error(`Flowise ${res.status}: ${errText.slice(0, 150)}`);
+    const err = new Error(`Flowise ${res.status}: ${errText.slice(0, 150)}`);
+    err.status = res.status;
+    throw err;
   }
 
   const reader  = res.body.getReader();
@@ -909,6 +915,14 @@ document.addEventListener('DOMContentLoaded',()=>{
 });
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ── Fehlermeldungen ────────────────────────────────────────────
+function friendlyErrorText(e) {
+  if (e && e.status === 429) {
+    return '⚠ Gerade zu viele Anfragen – bitte kurz warten (ca. 1 Minute) und es erneut versuchen.';
+  }
+  return '⚠ Fehler: ' + (e && e.message ? e.message : 'Unbekannter Fehler');
+}
 function markdownLite(t){
   return esc(t)
     .replace(/```([\s\S]*?)```/g,'<pre><code>$1</code></pre>')
